@@ -12,15 +12,27 @@ Supports:
 """
 
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import fitz  # PyMuPDF
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+import pymupdf as fitz
 import pandas as pd
 import pdfplumber
 import pytesseract
 from PIL import Image
 from langchain_core.documents import Document
+
+from exception.custom_exception import DocumentPortalException
+from logger.custom_logger import CustomLogger
+
+
+logger = CustomLogger().get_logger(__name__)
 
 
 class ComplexPDFParser:
@@ -52,9 +64,25 @@ class ComplexPDFParser:
         self.table_records: List[Dict[str, Any]] = []
         self.langchain_docs: List[Document] = []
 
-        self._validate_pdf()
-        self._create_output_directories()
-        self._configure_tesseract(tesseract_path)
+        try:
+            self._validate_pdf()
+            self._create_output_directories()
+            self._configure_tesseract(tesseract_path)
+            logger.info(
+                "pdf_parser_initialized",
+                pdf_path=str(self.pdf_path),
+                output_dir=str(self.output_dir),
+            )
+        except Exception as exc:
+            logger.exception(
+                "pdf_parser_initialization_failed",
+                pdf_path=str(self.pdf_path),
+                error=str(exc),
+            )
+            raise DocumentPortalException(
+                "Failed to initialize the PDF parser",
+                exc,
+            ) from exc
 
     # ============================================================
     # Setup
@@ -108,6 +136,11 @@ class ComplexPDFParser:
             return text.strip()
 
         except Exception as exc:
+            logger.warning(
+                "image_ocr_failed",
+                image_path=str(image_path),
+                error=str(exc),
+            )
             return f"[OCR_SKIPPED_OR_FAILED: {exc}]"
 
     # ============================================================
@@ -217,9 +250,11 @@ class ComplexPDFParser:
                 try:
                     tables = page.extract_tables() or []
                 except Exception as exc:
-                    print(
-                        f"Table extraction failed on page "
-                        f"{page_number}: {exc}"
+                    logger.warning(
+                        "table_extraction_failed",
+                        pdf_path=str(self.pdf_path),
+                        page_number=page_number,
+                        error=str(exc),
                     )
                     tables = []
 
@@ -436,32 +471,64 @@ IMAGE OCR TEXT:
                 "output_dir": "..."
             }
         """
-        print(f"Parsing PDF: {self.pdf_path}")
-
-        self.extract_text_and_images()
-        print(f"Pages parsed: {len(self.page_records)}")
-        print(f"Images extracted: {len(self.image_records)}")
-
-        self.extract_tables()
-        print(f"Tables extracted: {len(self.table_records)}")
-
-        self.create_langchain_documents()
-        print(
-            f"LangChain Documents created: "
-            f"{len(self.langchain_docs)}"
+        logger.info(
+            "pdf_parsing_started",
+            pdf_path=str(self.pdf_path),
         )
 
-        if save_output:
-            self.save_outputs()
-            print(f"Outputs saved in: {self.output_dir}")
+        try:
+            self.extract_text_and_images()
+            logger.info(
+                "pdf_content_extracted",
+                pages=len(self.page_records),
+                images=len(self.image_records),
+            )
 
-        return {
-            "pages": self.page_records,
-            "images": self.image_records,
-            "tables": self.table_records,
-            "documents": self.langchain_docs,
-            "output_dir": str(self.output_dir),
-        }
+            self.extract_tables()
+            logger.info(
+                "pdf_tables_extracted",
+                tables=len(self.table_records),
+            )
+
+            self.create_langchain_documents()
+            logger.info(
+                "langchain_documents_created",
+                documents=len(self.langchain_docs),
+            )
+
+            if save_output:
+                self.save_outputs()
+                logger.info(
+                    "parser_outputs_saved",
+                    output_dir=str(self.output_dir),
+                )
+
+            result = {
+                "pages": self.page_records,
+                "images": self.image_records,
+                "tables": self.table_records,
+                "documents": self.langchain_docs,
+                "output_dir": str(self.output_dir),
+            }
+
+            logger.info(
+                "pdf_parsing_completed",
+                pdf_path=str(self.pdf_path),
+            )
+            return result
+
+        except DocumentPortalException:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "pdf_parsing_failed",
+                pdf_path=str(self.pdf_path),
+                error=str(exc),
+            )
+            raise DocumentPortalException(
+                f"Failed to parse PDF: {self.pdf_path}",
+                exc,
+            ) from exc
 
 # ============================================================
 # Example Usage
@@ -469,7 +536,6 @@ IMAGE OCR TEXT:
 
 if __name__ == "__main__":
 
-    PROJECT_ROOT = Path(__file__).resolve().parent.parent
     DATA_DIR = PROJECT_ROOT / "data"
 
     PDF_PATH = DATA_DIR / "Client_Contracts_Policies_and_Incident_Records.pdf"
