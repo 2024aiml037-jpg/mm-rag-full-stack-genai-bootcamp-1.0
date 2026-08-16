@@ -17,3 +17,17 @@ langchain-core==1.5.3
 
 # Structured application logging
 structlog==26.1.0
+
+langchain-openai
+langchain-qdrant
+langchain-text-splitters
+qdrant-client
+python-dotenv
+streamlit
+
+# Notebook conversion utility
+nbformat
+nbconvert
+
+# Legacy setup.py compatibility
+setuptools>=68
